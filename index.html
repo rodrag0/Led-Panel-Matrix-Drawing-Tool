@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>64 x 32 editor para propuestas padelscore</title>
+    <style>
+        :root {
+            --pitch-mm: 5mm;
+            /* real pitch (scaled by calibration) */
+            --led-mm: 3mm;
+            /* real LED diameter (scaled by calibration) */
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, sans-serif;
+            background: #111;
+            color: #eee;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            margin: 0;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        h1 {
+            font-size: 18px;
+            margin: 5px 0;
+            text-align: center;
+        }
+
+        /* Wrapper so the matrix can scroll on small screens */
+        #matrixWrapper {
+            max-width: 100vw;
+            max-height: 65vh;
+            overflow: auto;
+            padding: 6px;
+            border-radius: 10px;
+            background: #000;
+            box-shadow: 0 0 20px #000;
+        }
+
+        #matrix {
+            display: grid;
+            grid-template-columns: repeat(64, var(--pitch-mm));
+            grid-template-rows: repeat(32, var(--pitch-mm));
+            gap: 0;
+            background: #000;
+            padding: 0;
+            /* allow vertical panning unless we explicitly block it in JS */
+            touch-action: pan-y;
+        }
+
+        .pixel {
+            width: var(--led-mm);
+            height: var(--led-mm);
+            margin: auto;
+            /* center within pitch cell */
+            border-radius: 50%;
+            /* circular LEDs */
+            background: #111;
+            box-shadow: 0 0 calc(var(--led-mm) / 2) #000 inset;
+            cursor: pointer;
+            transition: transform 0.05s;
+        }
+
+        .pixel.on {
+            box-shadow: 0 0 calc(var(--led-mm)) currentColor;
+        }
+
+        .pixel:hover {
+            transform: scale(1.1);
+        }
+
+        /* Top color bar */
+        #colorBar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 4px;
+            margin-bottom: 6px;
+        }
+
+        #colorBar span {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+
+        .color-swatch {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid #444;
+            cursor: pointer;
+            box-shadow: 0 0 4px #000;
+        }
+
+        .color-swatch.active {
+            border-color: #fff;
+            box-shadow: 0 0 8px #fff;
+        }
+
+        #colorPicker {
+            width: 32px;
+            height: 22px;
+            border: none;
+            padding: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+
+        #controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            align-items: center;
+        }
+
+        button {
+            padding: 4px 10px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #222;
+            color: #eee;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        button:hover {
+            background: #333;
+        }
+
+        #eraserToggle.active {
+            background: #600;
+            border-color: #f55;
+        }
+
+        textarea {
+            width: 95vw;
+            max-width: 900px;
+            height: 220px;
+            background: #000;
+            color: #0f0;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 6px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        small {
+            opacity: 0.8;
+            max-width: 900px;
+            text-align: center;
+        }
+
+        #instructions {
+            display: inline-block;
+            padding: 8px 12px;
+            margin-top: 4px;
+            background: #181818;
+            border-radius: 8px;
+            border: 1px solid #333;
+            line-height: 1.5;
+            text-align: left;
+            max-width: 900px;
+            font-size: 13px;
+        }
+
+        #instructions ul {
+            padding-left: 18px;
+            margin: 6px 0 0 0;
+        }
+
+        #instructions li {
+            margin: 2px 0;
+        }
+
+        /* Calibration modal overlay */
+        #calibrationOverlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            /* hidden by default */
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+        }
+
+        #calibrationPanel {
+            background: #222;
+            padding: 15px;
+            border-radius: 10px;
+            max-width: 600px;
+            width: 90%;
+            box-shadow: 0 0 20px #000;
+        }
+
+        #calibrationPanel h3 {
+            margin-top: 0;
+        }
+
+        /* Desktop: behave like before (no inner scroll) */
+        @media (min-width: 900px) {
+            #matrixWrapper {
+                max-height: none;
+                overflow: visible;
+                padding: 0;
+                background: transparent;
+                box-shadow: none;
+            }
+
+            #matrix {
+                box-shadow: 0 0 20px #000;
+                border-radius: 10px;
+            }
+        }
+
+        /* Mobile UI improvements */
+        @media (max-width: 600px) {
+
+            /* Bigger touch targets */
+            .color-swatch {
+                width: 32px;
+                height: 32px;
+                border-width: 3px;
+            }
+
+            #colorPicker {
+                width: 42px;
+                height: 36px;
+            }
+
+            button {
+                font-size: 15px;
+                padding: 10px 16px;
+                border-radius: 8px;
+            }
+
+            /* Bigger LEDs for easier drawing */
+            :root {
+                --pitch-mm: 7mm;
+                /* larger virtual pitch */
+                --led-mm: 4.4mm;
+                /* larger LED circle */
+            }
+
+            /* Slightly more spacing */
+            #colorBar {
+                gap: 12px;
+                margin-bottom: 10px;
+            }
+
+            #controls {
+                gap: 12px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Language selector -->
+    <div id="langSelect" style="display:flex;gap:8px;margin-bottom:4px;">
+        <button data-lang="en">English</button>
+        <button data-lang="es">Español (MX)</button>
+    </div>
+
+    <h1 id="titleText">64×32 LED Matrix Editor (Color)</h1>
+
+    <button id="openCalibration">Calibrate screen (real size)</button>
+
+    <small id="instructions">
+        Tap or click LEDs to paint with the selected color.
+        Drag while holding to draw continuously.
+        Use <b>Export</b> to get a <code>uint32_t image[32][64]</code> array (0xRRGGBB).
+        Paste such an array below and click <b>Load</b> to edit someone else's design.
+    </small>
+
+    <!-- Top color bar -->
+    <div id="colorBar">
+        <span id="colorLabel">Color:</span>
+        <div class="color-swatch" data-color="#ff0000" style="background:#ff0000;"></div>
+        <div class="color-swatch" data-color="#0000ff" style="background:#0000ff;"></div>
+        <div class="color-swatch" data-color="#00ff00" style="background:#00ff00;"></div>
+        <div class="color-swatch" data-color="#ffff00" style="background:#ffff00;"></div>
+        <div class="color-swatch" data-color="#ffffff" style="background:#ffffff;"></div>
+        <input type="color" id="colorPicker" value="#00ff00">
+    </div>
+
+    <!-- Calibration modal -->
+    <div id="calibrationOverlay">
+        <div id="calibrationPanel">
+            <h3>📏 Screen Calibration</h3>
+            <p>
+                Use a real ruler and adjust the slider so the green bar below measures exactly
+                <b>50 mm</b> (5 cm) on your screen. Then click <b>Apply calibration</b>.
+            </p>
+
+            <div id="calibrationBar"
+                style="background:rgb(144, 241, 248);height:5px;width:50mm;margin:10px 0;border-radius:3px;"></div>
+
+            <label>Adjust scale:
+                <input id="calibrationSlider" type="range" min="50" max="200" value="100" />
+            </label>
+
+            <p>Current scale: <span id="calibrationValue">100%</span></p>
+
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
+                <button id="closeCalibration">Close</button>
+                <button id="applyCalibration">Apply calibration</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="matrixWrapper">
+        <div id="matrix"></div>
+    </div>
+
+    <div id="controls">
+        <button id="clear">Clear</button>
+        <button id="fill">Fill</button>
+        <button id="invert">Invert</button>
+        <button id="eraserToggle">Eraser: OFF</button>
+        <button id="export">Export</button>
+        <button id="load">Load</button>
+        <button id="picture">Download PNG</button>
+        <small id="shiftTip">(Desktop: hold <b>Shift</b> while drawing to erase)</small>
+    </div>
+
+    <textarea id="output" spellcheck="false"></textarea>
+
+    <script>
+        const WIDTH = 64;
+        const HEIGHT = 32;
+
+        const matrix = document.getElementById("matrix");
+        const output = document.getElementById("output");
+        const colorPicker = document.getElementById("colorPicker");
+        const eraserToggleBtn = document.getElementById("eraserToggle");
+
+        //---------------------------------------------------------
+        //  Language system (EN / ES-MX)
+        //---------------------------------------------------------
+        const LANG = {
+            en: {
+                title: "PadelScore Draw",
+                calibrate: "Calibrate screen (real size)",
+                instructions:
+                    "<div><b>How to use:</b></div>" +
+                    "<ul>" +
+                    "<li>🎨 <b>Paint:</b> tap or click any LED to color it with the selected color.</li>" +
+                    "<li>✏️ <b>Draw:</b> hold the mouse (or your finger) and move to draw lines.</li>" +
+                    "<li>🧽 <b>Erase:</b> enable <b>Eraser</b>, or on desktop hold <b>Shift</b> while drawing.</li>" +
+                    "<li>📤 <b>Export:</b> click <b>Export</b> to get a <code>code to share with me</code> (0xRRGGBB).</li>" +
+                    "<li>📥 <b>Load:</b> paste an array into the box and press <b>Load</b> to edit a design.</li>" +
+                    "<li>🖼️ <b>PNG:</b> use <b>Download PNG</b> to save a high-res picture of your matrix.</li>" +
+                    "</ul>",
+                color: "Color:",
+                eraserOff: "Eraser: OFF",
+                eraserOn: "Eraser: ON",
+                clear: "Clear",
+                fill: "Fill",
+                invert: "Invert",
+                export: "Export",
+                load: "Load",
+                picture: "Download PNG",
+                shiftTip: "(Desktop: hold <b>Shift</b> while drawing to erase)"
+            },
+            es: {
+                title: "PadelScore Draw",
+                calibrate: "Calibrar pantalla (tamaño real)",
+                instructions:
+                    "<div><b>Cómo usarlo:</b></div>" +
+                    "<ul>" +
+                    "<li>🎨 <b>Pintar:</b> toca o haz clic en un LED para colorearlo con el color seleccionado.</li>" +
+                    "<li>✏️ <b>Dibujar:</b> mantén el dedo o el mouse presionado y arrastra para trazar líneas.</li>" +
+                    "<li>🧽 <b>Borrar:</b> activa el <b>Borrador</b>, o en escritorio mantén presionada la tecla <b>Shift</b> al dibujar.</li>" +
+                    "<li>📤 <b>Exportar:</b> haz clic en <b>Exportar</b> para obtener el código y compartírmelo.</li>" +
+                    "<li>📥 <b>Cargar:</b> pega un código en el recuadro y presiona <b>Cargar</b> para editar un diseño.</li>" +
+                    "<li>🖼️ <b>PNG:</b> usa <b>Download PNG</b> para guardar una imagen en alta resolución de la matriz.</li>" +
+                    "</ul>",
+                color: "Color:",
+                eraserOff: "Borrador: APAGADO",
+                eraserOn: "Borrador: ENCENDIDO",
+                clear: "Limpiar",
+                fill: "Rellenar",
+                invert: "Invertir",
+                export: "Exportar",
+                load: "Cargar",
+                picture: "Descargar PNG",
+                shiftTip: "(Escritorio: mantén presionada la tecla <b>Shift</b> para borrar)"
+            }
+        };
+
+        let currentLang = "en";
+
+        function applyLanguage(lang) {
+            currentLang = lang;
+
+            document.getElementById("titleText").innerHTML = LANG[lang].title;
+            document.getElementById("openCalibration").innerText = LANG[lang].calibrate;
+            document.getElementById("instructions").innerHTML = LANG[lang].instructions;
+            document.getElementById("colorLabel").innerText = LANG[lang].color;
+
+            document.getElementById("clear").innerText = LANG[lang].clear;
+            document.getElementById("fill").innerText = LANG[lang].fill;
+            document.getElementById("invert").innerText = LANG[lang].invert;
+            document.getElementById("export").innerText = LANG[lang].export;
+            document.getElementById("load").innerText = LANG[lang].load;
+            document.getElementById("picture").innerText = LANG[lang].picture;
+
+            eraserToggleBtn.textContent = eraseMode ? LANG[lang].eraserOn : LANG[lang].eraserOff;
+
+            document.getElementById("shiftTip").innerHTML = LANG[lang].shiftTip;
+        }
+
+        document.querySelectorAll("#langSelect button").forEach(btn => {
+            btn.addEventListener("click", () => applyLanguage(btn.dataset.lang));
+        });
+
+        //---------------------------------------------------------
+        //  Calibration System
+        //---------------------------------------------------------
+        const REAL_PITCH_MM = 5;   // real-world LED pitch (mm)
+        const REAL_LED_MM = 3;     // real LED diameter (mm)
+
+        const calibrationOverlay = document.getElementById("calibrationOverlay");
+        const calibrationSlider = document.getElementById("calibrationSlider");
+        const calibrationBar = document.getElementById("calibrationBar");
+        const calibrationValue = document.getElementById("calibrationValue");
+        const applyCalibration = document.getElementById("applyCalibration");
+        const closeCalibration = document.getElementById("closeCalibration");
+        const openCalibration = document.getElementById("openCalibration");
+
+        // Load saved scale (if any)
+        let userScale = parseFloat(localStorage.getItem("calibrationScale")) || 1.0;
+        applyScale(userScale);
+
+        // Initialize slider & label from saved scale
+        calibrationSlider.value = Math.round(userScale * 100);
+        calibrationValue.innerText = Math.round(userScale * 100) + "%";
+
+        // Open / close modal
+        openCalibration.addEventListener("click", () => {
+            calibrationOverlay.style.display = "flex";
+        });
+
+        closeCalibration.addEventListener("click", () => {
+            calibrationOverlay.style.display = "none";
+        });
+
+        // Close when clicking outside panel
+        calibrationOverlay.addEventListener("click", (e) => {
+            if (e.target === calibrationOverlay) {
+                calibrationOverlay.style.display = "none";
+            }
+        });
+
+        // Live update bar width as slider moves
+        calibrationSlider.addEventListener("input", () => {
+            const scale = calibrationSlider.value / 100;
+            calibrationBar.style.width = (50 * scale) + "mm";
+            calibrationValue.innerText = Math.round(scale * 100) + "%";
+        });
+
+        // Apply button
+        applyCalibration.addEventListener("click", () => {
+            userScale = calibrationSlider.value / 100;
+            localStorage.setItem("calibrationScale", userScale);
+
+            applyScale(userScale);
+
+            alert(currentLang === "es" ? "¡Calibración aplicada!" : "Calibration applied!");
+            calibrationOverlay.style.display = "none";
+        });
+
+        // Apply calibration to CSS variables
+        function applyScale(scale) {
+            const root = document.documentElement;
+            root.style.setProperty("--pitch-mm", (REAL_PITCH_MM * scale) + "mm");
+            root.style.setProperty("--led-mm", (REAL_LED_MM * scale) + "mm");
+
+            // update calibration bar width as well
+            calibrationBar.style.width = (50 * scale) + "mm";
+        }
+
+        //---------------------------------------------------------
+        //  Matrix editor logic
+        //---------------------------------------------------------
+
+        let currentColor = colorPicker.value || "#00ff00";
+
+        // Drag-draw state
+        let isDrawing = false;
+        let drawErase = false;  // true = erase for this stroke
+        let eraseMode = false;  // eraser toggle (good for mobile)
+
+        // touch scroll vs draw state
+        let isTouchScrolling = false;
+        let touchStartX = 0;
+        let touchStartY = 0;
+        const TOUCH_DRAW_THRESHOLD = 10; // px
+
+        // --- Create grid ---
+        const pixels = [];
+        for (let y = 0; y < HEIGHT; y++) {
+            for (let x = 0; x < WIDTH; x++) {
+                const div = document.createElement("div");
+                div.className = "pixel";
+                div.dataset.x = x;
+                div.dataset.y = y;
+                div.dataset.color = "#000000"; // off
+
+                // Start drawing on mousedown (desktop)
+                div.addEventListener("mousedown", (e) => {
+                    e.preventDefault(); // avoid drag ghost image
+                    isDrawing = true;
+                    drawErase = e.shiftKey || eraseMode;
+                    paintPixel(div);
+                });
+
+                // Continue drawing when moving over while mouse held
+                div.addEventListener("mouseover", () => {
+                    if (!isDrawing) return;
+                    paintPixel(div);
+                });
+
+                matrix.appendChild(div);
+                pixels.push(div);
+            }
+        }
+
+        // Stop drawing on mouseup anywhere
+        window.addEventListener("mouseup", () => {
+            isDrawing = false;
+        });
+
+        // Prevent long-press menu
+        matrix.addEventListener("contextmenu", (e) => e.preventDefault());
+
+        // --- Touch drawing support (mobile & tablets) ---
+        matrix.addEventListener("touchstart", (e) => {
+            if (e.touches.length === 0) return;
+
+            // If multi-touch: let browser handle scroll/zoom
+            if (e.touches.length > 1) {
+                isDrawing = false;
+                isTouchScrolling = true;
+                return;
+            }
+
+            const touch = e.touches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+            isTouchScrolling = false;
+
+            isDrawing = true;
+            drawErase = eraseMode; // mobile can't use Shift
+
+            // Don't preventDefault yet – we decide in touchmove
+            handleTouch(e);
+        }, { passive: false });
+
+        matrix.addEventListener("touchmove", (e) => {
+            if (e.touches.length === 0) return;
+
+            const touch = e.touches[0];
+            const dx = Math.abs(touch.clientX - touchStartX);
+            const dy = Math.abs(touch.clientY - touchStartY);
+
+            // If already scrolling, do nothing and let browser scroll
+            if (isTouchScrolling) {
+                return;
+            }
+
+            // Decide if this gesture is scroll or draw
+            if (!isTouchScrolling && isDrawing) {
+                if (dy > TOUCH_DRAW_THRESHOLD && dy > dx) {
+                    // Treat as scroll: stop drawing and allow default scroll
+                    isTouchScrolling = true;
+                    isDrawing = false;
+                    return;
+                } else {
+                    // Treat as drawing: block scroll and paint
+                    e.preventDefault();
+                    handleTouch(e);
+                    return;
+                }
+            }
+        }, { passive: false });
+
+        matrix.addEventListener("touchend", () => {
+            isDrawing = false;
+            isTouchScrolling = false;
+        });
+
+        matrix.addEventListener("touchcancel", () => {
+            isDrawing = false;
+            isTouchScrolling = false;
+        });
+
+        function handleTouch(e) {
+            const touch = e.touches[0];
+            if (!touch) return;
+            const target = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (target && target.classList.contains("pixel")) {
+                paintPixel(target);
+            }
+        }
+
+        function paintPixel(pixel) {
+            if (drawErase) {
+                setPixelColor(pixel, "#000000");
+            } else {
+                setPixelColor(pixel, currentColor);
+            }
+        }
+
+        // --- Color helpers ---
+        function setPixelColor(pixel, color) {
+            pixel.dataset.color = normalizeHex(color);
+            const hex = pixel.dataset.color;
+
+            if (hex.toLowerCase() === "#000000") {
+                pixel.classList.remove("on");
+                pixel.style.backgroundColor = "#111";
+                pixel.style.color = "#111"; // for currentColor of box-shadow
+                pixel.style.boxShadow = "0 0 calc(var(--led-mm) / 2) #000 inset";
+            } else {
+                pixel.classList.add("on");
+                pixel.style.backgroundColor = hex;
+                pixel.style.color = hex;
+                pixel.style.boxShadow = "0 0 calc(var(--led-mm)) " + hex;
+            }
+        }
+
+        function normalizeHex(c) {
+            // Already #RRGGBB
+            if (typeof c === "string" && /^#([0-9a-fA-F]{6})$/.test(c)) {
+                return "#" + c.slice(1).toLowerCase();
+            }
+            // #RGB -> #RRGGBB
+            if (typeof c === "string" && /^#([0-9a-fA-F]{3})$/.test(c)) {
+                let r = c[1], g = c[2], b = c[3];
+                return ("#" + r + r + g + g + b + b).toLowerCase();
+            }
+            // rgb(r,g,b)
+            if (typeof c === "string" && c.startsWith("rgb")) {
+                const m = c.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+                if (m) {
+                    const r = parseInt(m[1]).toString(16).padStart(2, "0");
+                    const g = parseInt(m[2]).toString(16).padStart(2, "0");
+                    const b = parseInt(m[3]).toString(16).padStart(2, "0");
+                    return "#" + (r + g + b).toLowerCase();
+                }
+            }
+            // Fallback to black
+            return "#000000";
+        }
+
+        function setAll(on) {
+            const col = on ? currentColor : "#000000";
+            pixels.forEach(p => setPixelColor(p, col));
+        }
+
+        function invertAll() {
+            pixels.forEach(p => {
+                const hex = p.dataset.color || "#000000";
+                if (hex.toLowerCase() === "#000000") {
+                    setPixelColor(p, currentColor);   // off -> current color
+                } else {
+                    setPixelColor(p, "#000000");      // on -> off
+                }
+            });
+        }
+
+        // --- Export: C-style uint32_t array [32][64] (0xRRGGBB) ---
+        // Now also copies the result directly to the clipboard
+        function exportC() {
+            let lines = [];
+            lines.push("// 64x32 RGB bitmap: image[row][col] = 0xRRGGBB");
+            lines.push("const uint32_t image[32][64] PROGMEM = {");
+
+            for (let y = 0; y < HEIGHT; y++) {
+                let rowColors = [];
+                for (let x = 0; x < WIDTH; x++) {
+                    const idx = y * WIDTH + x;
+                    let hex = pixels[idx].dataset.color || "#000000";
+                    hex = normalizeHex(hex).slice(1); // remove '#'
+                    rowColors.push("0x" + hex.toUpperCase());
+                }
+                lines.push("  { " + rowColors.join(", ") + " }" + (y < HEIGHT - 1 ? "," : ""));
+            }
+
+            lines.push("};");
+            const text = lines.join("\n");
+
+            // Update the textarea
+            output.value = text;
+
+            // Copy to clipboard (with fallback)
+            const msgEn = "Exported and copied to clipboard.";
+            const msgEs = "Exportado y copiado al portapapeles.";
+            const msg = (typeof currentLang !== "undefined" && currentLang === "es") ? msgEs : msgEn;
+
+            if (navigator.clipboard && window.isSecureContext) {
+                // Modern async clipboard API
+                navigator.clipboard.writeText(text)
+                    .then(() => {
+                        alert(msg);
+                    })
+                    .catch(() => {
+                        // Fallback if permission denied or other error
+                        fallbackCopy(text, msg);
+                    });
+            } else {
+                // Old browsers / non-secure context (file:// etc.)
+                fallbackCopy(text, msg);
+            }
+        }
+
+        // Fallback copy using textarea selection
+        function fallbackCopy(text, msg) {
+            try {
+                output.focus();
+                output.select();
+                const successful = document.execCommand("copy");
+                if (successful) {
+                    alert(msg);
+                } else {
+                    alert(msg + " (but automatic copy might have failed, please copy manually.)");
+                }
+            } catch (e) {
+                alert(msg + " (but automatic copy might have failed, please copy manually.)");
+            }
+        }
+
+        // --- Load: parse 0xRRGGBB values from textarea (row-major) ---
+        function loadFromText() {
+            const text = output.value;
+            const matches = text.match(/0x[0-9A-Fa-f]{6}/g) || [];
+            const totalPixels = WIDTH * HEIGHT;
+
+            for (let i = 0; i < totalPixels; i++) {
+                const p = pixels[i];
+                if (i < matches.length) {
+                    const hex = matches[i].slice(2); // remove 0x
+                    setPixelColor(p, "#" + hex);
+                } else {
+                    // anything missing -> black
+                    setPixelColor(p, "#000000");
+                }
+            }
+        }
+
+        // --- Screenshot: download high-res PNG of current matrix ---
+        function downloadPNG() {
+            const SCALE = 6;                   // overall image size (try 4–8)
+            const ledRatio = REAL_LED_MM / REAL_PITCH_MM;  // e.g. 3/5
+
+            // Base pitch in pixels in the PNG
+            const PITCH = 50 * SCALE;          // arbitrary base, SCALE makes it big
+            const LED_SIZE = PITCH * ledRatio; // keeps same LED:pitch ratio as real panel
+            const GAP = PITCH - LED_SIZE;      // rest of pitch is the gap
+            const BORDER = PITCH;              // frame around the matrix
+            const RADIUS = LED_SIZE / 2;
+
+            const canvas = document.createElement("canvas");
+            const pitchPx = LED_SIZE + GAP;
+
+            canvas.width = BORDER * 2 + WIDTH * pitchPx - GAP;
+            canvas.height = BORDER * 2 + HEIGHT * pitchPx - GAP;
+            const ctx = canvas.getContext("2d");
+
+            // Background
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // LED rendering loop
+            for (let y = 0; y < HEIGHT; y++) {
+                for (let x = 0; x < WIDTH; x++) {
+                    const idx = y * WIDTH + x;
+                    let hex = normalizeHex(pixels[idx].dataset.color || "#000000");
+
+                    const px = BORDER + x * pitchPx + LED_SIZE / 2;
+                    const py = BORDER + y * pitchPx + LED_SIZE / 2;
+
+                    // Shadow / glow
+                    if (hex !== "#000000") {
+                        ctx.shadowBlur = 0.3 * PITCH;    // glow proportional to pitch
+                        ctx.shadowColor = hex;
+                    } else {
+                        ctx.shadowBlur = 0;
+                    }
+
+                    // LED disk
+                    ctx.beginPath();
+                    ctx.arc(px, py, RADIUS, 0, Math.PI * 2);
+                    ctx.fillStyle = hex !== "#000000" ? hex : "#111";
+                    ctx.fill();
+                }
+            }
+
+            // Download file
+            const link = document.createElement("a");
+            link.href = canvas.toDataURL("image/png");
+            link.download = "matrix_64x32_hd.png";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // --- Color bar logic (presets + picker) ---
+        const swatches = Array.from(document.querySelectorAll(".color-swatch"));
+
+        function setCurrentColor(color, fromSwatch = false, swatchEl = null) {
+            currentColor = normalizeHex(color);
+            colorPicker.value = currentColor;
+
+            // Highlight swatches only if selected from a swatch
+            swatches.forEach(s => s.classList.remove("active"));
+            if (fromSwatch && swatchEl) {
+                swatchEl.classList.add("active");
+            }
+        }
+
+        // Initialize: make green preset active (matches default)
+        swatches.forEach(s => {
+            const c = s.getAttribute("data-color");
+            if (c.toLowerCase() === "#00ff00") {
+                s.classList.add("active");
+            }
+        });
+
+        swatches.forEach(s => {
+            s.addEventListener("click", () => {
+                const col = s.getAttribute("data-color") || "#00ff00";
+                setCurrentColor(col, true, s);
+            });
+        });
+
+        colorPicker.addEventListener("input", (e) => {
+            // When user picks a custom color, deselect all presets
+            swatches.forEach(s => s.classList.remove("active"));
+            currentColor = normalizeHex(e.target.value);
+        });
+
+        // --- Eraser toggle (works great on mobile) ---
+        eraserToggleBtn.addEventListener("click", () => {
+            eraseMode = !eraseMode;
+            eraserToggleBtn.classList.toggle("active", eraseMode);
+            eraserToggleBtn.textContent = eraseMode
+                ? LANG[currentLang].eraserOn
+                : LANG[currentLang].eraserOff;
+        });
+
+        // --- Event wiring ---
+        document.getElementById("clear").onclick = () => setAll(false);
+        document.getElementById("fill").onclick = () => setAll(true);
+        document.getElementById("invert").onclick = invertAll;
+        document.getElementById("export").onclick = exportC;
+        document.getElementById("load").onclick = loadFromText;
+        document.getElementById("picture").onclick = downloadPNG;
+
+        // Initial export (empty / black) + initial language
+        exportC();
+        applyLanguage("en");
+    </script>
+</body>
+
+</html>
