@@ -55,8 +55,8 @@
             gap: 0;
             background: #000;
             padding: 0;
-            /* allow vertical panning unless we explicitly block it in JS */
-            touch-action: pan-y;
+            /* allow horizontal panning on touch */
+            touch-action: pan-x;
         }
 
         .pixel {
@@ -507,12 +507,6 @@
         let drawErase = false;  // true = erase for this stroke
         let eraseMode = false;  // eraser toggle (good for mobile)
 
-        // touch scroll vs draw state
-        let isTouchScrolling = false;
-        let touchStartX = 0;
-        let touchStartY = 0;
-        const TOUCH_DRAW_THRESHOLD = 10; // px
-
         // --- Create grid ---
         const pixels = [];
         for (let y = 0; y < HEIGHT; y++) {
@@ -551,64 +545,29 @@
         matrix.addEventListener("contextmenu", (e) => e.preventDefault());
 
         // --- Touch drawing support (mobile & tablets) ---
+        // Let the browser handle scrolling; we only draw when a single finger moves over pixels.
         matrix.addEventListener("touchstart", (e) => {
-            if (e.touches.length === 0) return;
-
-            // If multi-touch: let browser handle scroll/zoom
-            if (e.touches.length > 1) {
+            if (e.touches.length !== 1) {
+                // multi-touch: let the browser handle zoom/scroll
                 isDrawing = false;
-                isTouchScrolling = true;
                 return;
             }
-
-            const touch = e.touches[0];
-            touchStartX = touch.clientX;
-            touchStartY = touch.clientY;
-            isTouchScrolling = false;
-
             isDrawing = true;
             drawErase = eraseMode; // mobile can't use Shift
-
-            // Don't preventDefault yet – we decide in touchmove
             handleTouch(e);
-        }, { passive: false });
+        }, { passive: true });
 
         matrix.addEventListener("touchmove", (e) => {
-            if (e.touches.length === 0) return;
-
-            const touch = e.touches[0];
-            const dx = Math.abs(touch.clientX - touchStartX);
-            const dy = Math.abs(touch.clientY - touchStartY);
-
-            // If already scrolling, do nothing and let browser scroll
-            if (isTouchScrolling) {
-                return;
-            }
-
-            // Decide if this gesture is scroll or draw
-            if (!isTouchScrolling && isDrawing) {
-                if (dy > TOUCH_DRAW_THRESHOLD && dy > dx) {
-                    // Treat as scroll: stop drawing and allow default scroll
-                    isTouchScrolling = true;
-                    isDrawing = false;
-                    return;
-                } else {
-                    // Treat as drawing: block scroll and paint
-                    e.preventDefault();
-                    handleTouch(e);
-                    return;
-                }
-            }
-        }, { passive: false });
+            if (!isDrawing || e.touches.length !== 1) return;
+            handleTouch(e);
+        }, { passive: true });
 
         matrix.addEventListener("touchend", () => {
             isDrawing = false;
-            isTouchScrolling = false;
         });
 
         matrix.addEventListener("touchcancel", () => {
             isDrawing = false;
-            isTouchScrolling = false;
         });
 
         function handleTouch(e) {
