@@ -55,8 +55,8 @@
             gap: 0;
             background: #000;
             padding: 0;
-            touch-action: none;
-            /* important for touch drawing */
+            /* allow horizontal panning on touch */
+            touch-action: pan-x;
         }
 
         .pixel {
@@ -125,6 +125,39 @@
             gap: 8px;
             justify-content: center;
             align-items: center;
+        }
+
+        #animationControls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            align-items: center;
+            max-width: 900px;
+        }
+
+        #frameInfo {
+            min-width: 110px;
+            font-size: 13px;
+            text-align: center;
+            opacity: 0.9;
+        }
+
+        #fpsLabel {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            opacity: 0.9;
+        }
+
+        #fpsInput {
+            width: 64px;
+            padding: 4px 6px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #111;
+            color: #eee;
         }
 
         button {
@@ -228,7 +261,6 @@
             }
         }
 
-        /* Mobile tweaks */
         /* Mobile UI improvements */
         @media (max-width: 600px) {
 
@@ -267,6 +299,10 @@
             #controls {
                 gap: 12px;
             }
+
+            #animationControls {
+                gap: 12px;
+            }
         }
     </style>
 </head>
@@ -285,8 +321,9 @@
     <small id="instructions">
         Tap or click LEDs to paint with the selected color.
         Drag while holding to draw continuously.
-        Use <b>Export</b> to get a <code>uint32_t image[32][64]</code> array (0xRRGGBB).
-        Paste such an array below and click <b>Load</b> to edit someone else's design.
+        Add frames to build an animation and play it.
+        Use <b>Export</b> to generate a <code>frames[F][32][64]</code> header.
+        Paste a header below (or import a file) and click <b>Load</b>.
     </small>
 
     <!-- Top color bar -->
@@ -340,16 +377,36 @@
         <small id="shiftTip">(Desktop: hold <b>Shift</b> while drawing to erase)</small>
     </div>
 
+    <div id="animationControls">
+        <button id="prevFrame">Prev Frame</button>
+        <span id="frameInfo">Frame 1 / 1</span>
+        <button id="nextFrame">Next Frame</button>
+        <button id="newFrame">New Frame</button>
+        <button id="newFrameCopy">Copy Last + New</button>
+        <button id="deleteFrame">Delete Frame</button>
+        <label id="fpsLabel"><span id="fpsLabelText">FPS:</span><input id="fpsInput" type="number" min="1" max="60"
+                value="8"></label>
+        <button id="playAnim">Play</button>
+        <button id="importFileBtn">Import File</button>
+        <input id="importFileInput" type="file" accept=".h,.hpp,.c,.cpp,.txt,.ino" hidden>
+    </div>
+
     <textarea id="output" spellcheck="false"></textarea>
 
     <script>
         const WIDTH = 64;
         const HEIGHT = 32;
+        const TOTAL_PIXELS = WIDTH * HEIGHT;
 
         const matrix = document.getElementById("matrix");
         const output = document.getElementById("output");
         const colorPicker = document.getElementById("colorPicker");
         const eraserToggleBtn = document.getElementById("eraserToggle");
+        const frameInfoEl = document.getElementById("frameInfo");
+        const fpsInput = document.getElementById("fpsInput");
+        const playAnimBtn = document.getElementById("playAnim");
+        const importFileBtn = document.getElementById("importFileBtn");
+        const importFileInput = document.getElementById("importFileInput");
 
         //---------------------------------------------------------
         //  Language system (EN / ES-MX)
@@ -362,11 +419,11 @@
                     "<div><b>How to use:</b></div>" +
                     "<ul>" +
                     "<li>🎨 <b>Paint:</b> tap or click any LED to color it with the selected color.</li>" +
-                    "<li>✏️ <b>Draw:</b> hold the mouse (or your finger) and move to draw lines.</li>" +
-                    "<li>🧽 <b>Erase:</b> enable <b>Eraser</b>, or on desktop hold <b>Shift</b> while drawing.</li>" +
-                    "<li>📤 <b>Export:</b> click <b>Export</b> to get a <code>code to share with me</code> (0xRRGGBB).</li>" +
-                    "<li>📥 <b>Load:</b> paste an array into the box and press <b>Load</b> to edit a design.</li>" +
-                    "<li>🖼️ <b>PNG:</b> use <b>Download PNG</b> to save a high-res picture of your matrix.</li>" +
+                    "<li>🧱 <b>Frames:</b> use <b>New Frame</b> or <b>Copy Last + New</b> to build animations.</li>" +
+                    "<li>▶️ <b>Play:</b> set FPS and press <b>Play</b> to preview all frames.</li>" +
+                    "<li>📤 <b>Export:</b> creates <code>frames[F][32][64]</code> in C header style.</li>" +
+                    "<li>📥 <b>Load:</b> paste text and click <b>Load</b>, or use <b>Import File</b>.</li>" +
+                    "<li>🖼️ <b>PNG:</b> use <b>Download PNG</b> to save the current frame.</li>" +
                     "</ul>",
                 color: "Color:",
                 eraserOff: "Eraser: OFF",
@@ -374,10 +431,25 @@
                 clear: "Clear",
                 fill: "Fill",
                 invert: "Invert",
-                export: "Export",
+                export: "Export Animation",
                 load: "Load",
                 picture: "Download PNG",
-                shiftTip: "(Desktop: hold <b>Shift</b> while drawing to erase)"
+                shiftTip: "(Desktop: hold <b>Shift</b> while drawing to erase)",
+                prevFrame: "Prev Frame",
+                nextFrame: "Next Frame",
+                newFrame: "New Frame",
+                newFrameCopy: "Copy Last + New",
+                deleteFrame: "Delete Frame",
+                play: "Play",
+                stop: "Stop",
+                importFile: "Import File",
+                fps: "FPS",
+                frameLabel: "Frame",
+                needTwoFrames: "Create at least 2 frames to play an animation.",
+                cannotDeleteOnlyFrame: "At least one frame must exist.",
+                invalidImport: "No valid animation data found. Paste a C header with 0xRRGGBB values.",
+                importedFrames: "Imported animation with {count} frame(s).",
+                ignoredValues: "Some extra color values were ignored."
             },
             es: {
                 title: "PadelScore Draw",
@@ -386,11 +458,11 @@
                     "<div><b>Cómo usarlo:</b></div>" +
                     "<ul>" +
                     "<li>🎨 <b>Pintar:</b> toca o haz clic en un LED para colorearlo con el color seleccionado.</li>" +
-                    "<li>✏️ <b>Dibujar:</b> mantén el dedo o el mouse presionado y arrastra para trazar líneas.</li>" +
-                    "<li>🧽 <b>Borrar:</b> activa el <b>Borrador</b>, o en escritorio mantén presionada la tecla <b>Shift</b> al dibujar.</li>" +
-                    "<li>📤 <b>Exportar:</b> haz clic en <b>Exportar</b> para obtener el codigo y compartirmelo.</li>" +
-                    "<li>📥 <b>Cargar:</b> pega un codigo en el recuadro y presiona <b>Cargar</b> para editar un diseño.</li>" +
-                    "<li>🖼️ <b>PNG:</b> usa <b>Download PNG</b> para guardar una imagen en alta resolución de la matriz.</li>" +
+                    "<li>🧱 <b>Cuadros:</b> usa <b>Nuevo cuadro</b> o <b>Copiar último + nuevo</b> para animar.</li>" +
+                    "<li>▶️ <b>Reproducir:</b> ajusta FPS y presiona <b>Reproducir</b> para previsualizar.</li>" +
+                    "<li>📤 <b>Exportar:</b> genera <code>frames[F][32][64]</code> en formato de header C.</li>" +
+                    "<li>📥 <b>Cargar:</b> pega texto y presiona <b>Cargar</b>, o usa <b>Importar archivo</b>.</li>" +
+                    "<li>🖼️ <b>PNG:</b> usa <b>Descargar PNG</b> para guardar el cuadro actual.</li>" +
                     "</ul>",
                 color: "Color:",
                 eraserOff: "Borrador: APAGADO",
@@ -398,15 +470,45 @@
                 clear: "Limpiar",
                 fill: "Rellenar",
                 invert: "Invertir",
-                export: "Exportar",
+                export: "Exportar animación",
                 load: "Cargar",
                 picture: "Descargar PNG",
-                shiftTip: "(Escritorio: mantén presionada la tecla <b>Shift</b> para borrar)"
+                shiftTip: "(Escritorio: mantén presionada la tecla <b>Shift</b> para borrar)",
+                prevFrame: "Cuadro anterior",
+                nextFrame: "Cuadro siguiente",
+                newFrame: "Nuevo cuadro",
+                newFrameCopy: "Copiar último + nuevo",
+                deleteFrame: "Eliminar cuadro",
+                play: "Reproducir",
+                stop: "Detener",
+                importFile: "Importar archivo",
+                fps: "FPS",
+                frameLabel: "Cuadro",
+                needTwoFrames: "Crea al menos 2 cuadros para reproducir una animación.",
+                cannotDeleteOnlyFrame: "Debe existir al menos un cuadro.",
+                invalidImport: "No se encontró una animación válida. Pega un header C con valores 0xRRGGBB.",
+                importedFrames: "Animación importada con {count} cuadro(s).",
+                ignoredValues: "Se ignoraron algunos valores de color extra."
             }
         };
 
-
         let currentLang = "en";
+        let currentColor = colorPicker.value || "#00ff00";
+
+        // Drag-draw state
+        let isDrawing = false;
+        let drawErase = false;  // true = erase for this stroke
+        let eraseMode = false;  // eraser toggle (good for mobile)
+
+        // Animation state
+        let frames = [createEmptyFrame()];
+        let currentFrameIndex = 0;
+        let isPlaying = false;
+        let playTimer = null;
+
+        function localize(template, vars = {}) {
+            return template.replace(/\{(\w+)\}/g, (_, key) => String(vars[key] ?? ""));
+        }
 
         function applyLanguage(lang) {
             currentLang = lang;
@@ -422,8 +524,17 @@
             document.getElementById("export").innerText = LANG[lang].export;
             document.getElementById("load").innerText = LANG[lang].load;
             document.getElementById("picture").innerText = LANG[lang].picture;
+            document.getElementById("prevFrame").innerText = LANG[lang].prevFrame;
+            document.getElementById("nextFrame").innerText = LANG[lang].nextFrame;
+            document.getElementById("newFrame").innerText = LANG[lang].newFrame;
+            document.getElementById("newFrameCopy").innerText = LANG[lang].newFrameCopy;
+            document.getElementById("deleteFrame").innerText = LANG[lang].deleteFrame;
+            document.getElementById("fpsLabelText").innerText = LANG[lang].fps + ":";
+            importFileBtn.innerText = LANG[lang].importFile;
 
             eraserToggleBtn.textContent = eraseMode ? LANG[lang].eraserOn : LANG[lang].eraserOff;
+            updatePlayButtonLabel();
+            updateFrameInfo();
 
             document.getElementById("shiftTip").innerHTML = LANG[lang].shiftTip;
         }
@@ -481,9 +592,7 @@
         applyCalibration.addEventListener("click", () => {
             userScale = calibrationSlider.value / 100;
             localStorage.setItem("calibrationScale", userScale);
-
             applyScale(userScale);
-
             alert(currentLang === "es" ? "¡Calibración aplicada!" : "Calibration applied!");
             calibrationOverlay.style.display = "none";
         });
@@ -493,21 +602,43 @@
             const root = document.documentElement;
             root.style.setProperty("--pitch-mm", (REAL_PITCH_MM * scale) + "mm");
             root.style.setProperty("--led-mm", (REAL_LED_MM * scale) + "mm");
-
-            // update calibration bar width as well
             calibrationBar.style.width = (50 * scale) + "mm";
         }
 
         //---------------------------------------------------------
-        //  Matrix editor logic
+        //  Matrix + animation helpers
         //---------------------------------------------------------
+        function createEmptyFrame() {
+            return Array(TOTAL_PIXELS).fill("#000000");
+        }
 
-        let currentColor = colorPicker.value || "#00ff00";
+        function cloneFrame(frame) {
+            return frame.slice();
+        }
 
-        // Drag-draw state
-        let isDrawing = false;
-        let drawErase = false;  // true = erase for this stroke
-        let eraseMode = false;  // eraser toggle (good for mobile)
+        function getPixelIndex(pixel) {
+            return Number(pixel.dataset.y) * WIDTH + Number(pixel.dataset.x);
+        }
+
+        function normalizeHex(c) {
+            if (typeof c === "string" && /^#([0-9a-fA-F]{6})$/.test(c)) {
+                return "#" + c.slice(1).toLowerCase();
+            }
+            if (typeof c === "string" && /^#([0-9a-fA-F]{3})$/.test(c)) {
+                const r = c[1], g = c[2], b = c[3];
+                return ("#" + r + r + g + g + b + b).toLowerCase();
+            }
+            if (typeof c === "string" && c.startsWith("rgb")) {
+                const m = c.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+                if (m) {
+                    const r = parseInt(m[1], 10).toString(16).padStart(2, "0");
+                    const g = parseInt(m[2], 10).toString(16).padStart(2, "0");
+                    const b = parseInt(m[3], 10).toString(16).padStart(2, "0");
+                    return "#" + (r + g + b).toLowerCase();
+                }
+            }
+            return "#000000";
+        }
 
         // --- Create grid ---
         const pixels = [];
@@ -517,11 +648,12 @@
                 div.className = "pixel";
                 div.dataset.x = x;
                 div.dataset.y = y;
-                div.dataset.color = "#000000"; // off
+                div.dataset.color = "#000000";
 
                 // Start drawing on mousedown (desktop)
                 div.addEventListener("mousedown", (e) => {
-                    e.preventDefault(); // avoid drag ghost image
+                    e.preventDefault();
+                    stopPlayback();
                     isDrawing = true;
                     drawErase = e.shiftKey || eraseMode;
                     paintPixel(div);
@@ -546,20 +678,22 @@
         // Prevent long-press menu
         matrix.addEventListener("contextmenu", (e) => e.preventDefault());
 
-        // --- Touch drawing support (mobile & tablets) ---
+        // Touch drawing support
         matrix.addEventListener("touchstart", (e) => {
-            e.preventDefault(); // stop scrolling
-            if (e.touches.length === 0) return;
+            if (e.touches.length !== 1) {
+                isDrawing = false;
+                return;
+            }
+            stopPlayback();
             isDrawing = true;
             drawErase = eraseMode; // mobile can't use Shift
             handleTouch(e);
-        }, { passive: false });
+        }, { passive: true });
 
         matrix.addEventListener("touchmove", (e) => {
-            e.preventDefault();
-            if (!isDrawing) return;
+            if (!isDrawing || e.touches.length !== 1) return;
             handleTouch(e);
-        }, { passive: false });
+        }, { passive: true });
 
         matrix.addEventListener("touchend", () => {
             isDrawing = false;
@@ -578,23 +712,15 @@
             }
         }
 
-        function paintPixel(pixel) {
-            if (drawErase) {
-                setPixelColor(pixel, "#000000");
-            } else {
-                setPixelColor(pixel, currentColor);
-            }
-        }
-
         // --- Color helpers ---
         function setPixelColor(pixel, color) {
             pixel.dataset.color = normalizeHex(color);
             const hex = pixel.dataset.color;
 
-            if (hex.toLowerCase() === "#000000") {
+            if (hex === "#000000") {
                 pixel.classList.remove("on");
                 pixel.style.backgroundColor = "#111";
-                pixel.style.color = "#111"; // for currentColor of box-shadow
+                pixel.style.color = "#111";
                 pixel.style.boxShadow = "0 0 calc(var(--led-mm) / 2) #000 inset";
             } else {
                 pixel.classList.add("on");
@@ -604,94 +730,209 @@
             }
         }
 
-        function normalizeHex(c) {
-            // Already #RRGGBB
-            if (typeof c === "string" && /^#([0-9a-fA-F]{6})$/.test(c)) {
-                return "#" + c.slice(1).toLowerCase();
+        function renderCurrentFrame() {
+            const frame = frames[currentFrameIndex];
+            for (let i = 0; i < TOTAL_PIXELS; i++) {
+                setPixelColor(pixels[i], frame[i] || "#000000");
             }
-            // #RGB -> #RRGGBB
-            if (typeof c === "string" && /^#([0-9a-fA-F]{3})$/.test(c)) {
-                let r = c[1], g = c[2], b = c[3];
-                return ("#" + r + r + g + g + b + b).toLowerCase();
+            updateFrameInfo();
+        }
+
+        function setCurrentFrame(index) {
+            if (index < 0 || index >= frames.length) return;
+            currentFrameIndex = index;
+            renderCurrentFrame();
+        }
+
+        function setPixelInCurrentFrame(pixel, color) {
+            const idx = getPixelIndex(pixel);
+            const hex = normalizeHex(color);
+            frames[currentFrameIndex][idx] = hex;
+            setPixelColor(pixel, hex);
+        }
+
+        function paintPixel(pixel) {
+            if (drawErase) {
+                setPixelInCurrentFrame(pixel, "#000000");
+            } else {
+                setPixelInCurrentFrame(pixel, currentColor);
             }
-            // rgb(r,g,b)
-            if (typeof c === "string" && c.startsWith("rgb")) {
-                const m = c.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
-                if (m) {
-                    const r = parseInt(m[1]).toString(16).padStart(2, "0");
-                    const g = parseInt(m[2]).toString(16).padStart(2, "0");
-                    const b = parseInt(m[3]).toString(16).padStart(2, "0");
-                    return "#" + (r + g + b).toLowerCase();
-                }
-            }
-            // Fallback to black
-            return "#000000";
         }
 
         function setAll(on) {
             const col = on ? currentColor : "#000000";
-            pixels.forEach(p => setPixelColor(p, col));
+            for (let i = 0; i < TOTAL_PIXELS; i++) {
+                const p = pixels[i];
+                setPixelInCurrentFrame(p, col);
+            }
         }
 
         function invertAll() {
-            pixels.forEach(p => {
+            for (let i = 0; i < TOTAL_PIXELS; i++) {
+                const p = pixels[i];
                 const hex = p.dataset.color || "#000000";
-                if (hex.toLowerCase() === "#000000") {
-                    setPixelColor(p, currentColor);   // off -> current color
+                if (hex === "#000000") {
+                    setPixelInCurrentFrame(p, currentColor);
                 } else {
-                    setPixelColor(p, "#000000");      // on -> off
+                    setPixelInCurrentFrame(p, "#000000");
                 }
-            });
+            }
         }
 
-        // --- Export: C-style uint32_t array [32][64] (0xRRGGBB) ---
-        // --- Export: C-style uint32_t array [32][64] (0xRRGGBB) ---
-        // Now also copies the result directly to the clipboard
-        function exportC() {
-            let lines = [];
-            lines.push("// 64x32 RGB bitmap: image[row][col] = 0xRRGGBB");
-            lines.push("const uint32_t image[32][64] PROGMEM = {");
+        function updateFrameInfo() {
+            frameInfoEl.textContent = `${LANG[currentLang].frameLabel} ${currentFrameIndex + 1} / ${frames.length}`;
+        }
 
-            for (let y = 0; y < HEIGHT; y++) {
-                let rowColors = [];
-                for (let x = 0; x < WIDTH; x++) {
-                    const idx = y * WIDTH + x;
-                    let hex = pixels[idx].dataset.color || "#000000";
-                    hex = normalizeHex(hex).slice(1); // remove '#'
-                    rowColors.push("0x" + hex.toUpperCase());
-                }
-                lines.push("  { " + rowColors.join(", ") + " }" + (y < HEIGHT - 1 ? "," : ""));
+        function addFrame(copyLast) {
+            stopPlayback();
+            const source = copyLast ? frames[frames.length - 1] : createEmptyFrame();
+            frames.push(cloneFrame(source));
+            setCurrentFrame(frames.length - 1);
+        }
+
+        function deleteCurrentFrame() {
+            if (frames.length <= 1) {
+                alert(LANG[currentLang].cannotDeleteOnlyFrame);
+                return;
             }
+            stopPlayback();
+            frames.splice(currentFrameIndex, 1);
+            if (currentFrameIndex >= frames.length) {
+                currentFrameIndex = frames.length - 1;
+            }
+            renderCurrentFrame();
+        }
 
-            lines.push("};");
-            const text = lines.join("\n");
+        function updatePlayButtonLabel() {
+            playAnimBtn.textContent = isPlaying ? LANG[currentLang].stop : LANG[currentLang].play;
+        }
 
-            // Update the textarea
-            output.value = text;
+        function stopPlayback() {
+            if (playTimer !== null) {
+                window.clearInterval(playTimer);
+                playTimer = null;
+            }
+            isPlaying = false;
+            updatePlayButtonLabel();
+        }
 
-            // Copy to clipboard (with fallback)
-            const msgEn = "Exported and copied to clipboard.";
-            const msgEs = "Exportado y copiado al portapapeles.";
-            const msg = (typeof currentLang !== "undefined" && currentLang === "es") ? msgEs : msgEn;
+        function startPlayback() {
+            if (frames.length < 2) {
+                alert(LANG[currentLang].needTwoFrames);
+                return;
+            }
+            stopPlayback();
+            isPlaying = true;
+            updatePlayButtonLabel();
 
-            if (navigator.clipboard && window.isSecureContext) {
-                // Modern async clipboard API
-                navigator.clipboard.writeText(text)
-                    .then(() => {
-                        alert(msg);
-                    })
-                    .catch(() => {
-                        // Fallback if permission denied or other error
-                        fallbackCopy(text, msg);
-                    });
+            const fps = Math.max(1, Math.min(60, parseInt(fpsInput.value, 10) || 8));
+            fpsInput.value = String(fps);
+            playTimer = window.setInterval(() => {
+                currentFrameIndex = (currentFrameIndex + 1) % frames.length;
+                renderCurrentFrame();
+            }, Math.round(1000 / fps));
+        }
+
+        function togglePlayback() {
+            if (isPlaying) {
+                stopPlayback();
             } else {
-                // Old browsers / non-secure context (file:// etc.)
-                fallbackCopy(text, msg);
+                startPlayback();
             }
         }
 
-        // Fallback copy using textarea selection
-        function fallbackCopy(text, msg) {
+        // --- Import / export ---
+        function parseAnimationFrames(text) {
+            const matches = text.match(/(?:0x|#)[0-9A-Fa-f]{6}/g) || [];
+            if (matches.length === 0) return null;
+
+            const parsedFrames = [];
+
+            // Support loading a single frame even when fewer than 2048 pixels are provided.
+            if (matches.length < TOTAL_PIXELS) {
+                const frame = createEmptyFrame();
+                for (let i = 0; i < matches.length; i++) {
+                    const token = matches[i];
+                    const hex = token.startsWith("#") ? token.slice(1) : token.slice(2);
+                    frame[i] = "#" + hex.toLowerCase();
+                }
+                parsedFrames.push(frame);
+                return {
+                    frames: parsedFrames,
+                    ignoredCount: 0
+                };
+            }
+
+            const frameCount = Math.floor(matches.length / TOTAL_PIXELS);
+            for (let f = 0; f < frameCount; f++) {
+                const frame = createEmptyFrame();
+                for (let i = 0; i < TOTAL_PIXELS; i++) {
+                    const token = matches[f * TOTAL_PIXELS + i];
+                    const hex = token.startsWith("#") ? token.slice(1) : token.slice(2);
+                    frame[i] = "#" + hex.toLowerCase();
+                }
+                parsedFrames.push(frame);
+            }
+
+            return {
+                frames: parsedFrames,
+                ignoredCount: matches.length - frameCount * TOTAL_PIXELS
+            };
+        }
+
+        function loadAnimationFromText(text, notify = true) {
+            const parsed = parseAnimationFrames(text);
+            if (!parsed) {
+                alert(LANG[currentLang].invalidImport);
+                return false;
+            }
+
+            stopPlayback();
+            frames = parsed.frames;
+            currentFrameIndex = 0;
+            renderCurrentFrame();
+
+            if (notify) {
+                let msg = localize(LANG[currentLang].importedFrames, { count: frames.length });
+                if (parsed.ignoredCount > 0) {
+                    msg += " " + LANG[currentLang].ignoredValues;
+                }
+                alert(msg);
+            }
+            return true;
+        }
+
+        function loadFromText() {
+            loadAnimationFromText(output.value, true);
+        }
+
+        function buildAnimationExportText() {
+            const lines = [];
+            lines.push(`// 64x32 RGB bitmap animation frames (${frames.length} frames)`);
+            lines.push("// frame[f][row][col] = 0xRRGGBB");
+            lines.push("");
+            lines.push(`const uint32_t frames[${frames.length}][32][64] PROGMEM = {`);
+
+            for (let f = 0; f < frames.length; f++) {
+                const frame = frames[f];
+                const deg = (f * 360 / frames.length).toFixed(1);
+                lines.push(`  { // frame ${f} (${deg} deg)`);
+                for (let y = 0; y < HEIGHT; y++) {
+                    const rowColors = [];
+                    for (let x = 0; x < WIDTH; x++) {
+                        const idx = y * WIDTH + x;
+                        const hex = normalizeHex(frame[idx] || "#000000").slice(1).toUpperCase();
+                        rowColors.push("0x" + hex);
+                    }
+                    lines.push("    { " + rowColors.join(", ") + " }" + (y < HEIGHT - 1 ? "," : ""));
+                }
+                lines.push("  }" + (f < frames.length - 1 ? "," : ""));
+            }
+            lines.push("};");
+            return lines.join("\n");
+        }
+
+        function fallbackCopy(msg) {
             try {
                 output.focus();
                 output.select();
@@ -706,35 +947,49 @@
             }
         }
 
+        function exportC(copyToClipboard = true) {
+            const text = buildAnimationExportText();
+            output.value = text;
+            if (!copyToClipboard) return text;
 
-        // --- Load: parse 0xRRGGBB values from textarea (row-major) ---
-        function loadFromText() {
-            const text = output.value;
-            const matches = text.match(/0x[0-9A-Fa-f]{6}/g) || [];
-            const totalPixels = WIDTH * HEIGHT;
+            const msg = currentLang === "es"
+                ? "Animación exportada y copiada al portapapeles."
+                : "Animation exported and copied to clipboard.";
 
-            for (let i = 0; i < totalPixels; i++) {
-                const p = pixels[i];
-                if (i < matches.length) {
-                    const hex = matches[i].slice(2); // remove 0x
-                    setPixelColor(p, "#" + hex);
-                } else {
-                    // anything missing -> black
-                    setPixelColor(p, "#000000");
-                }
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text)
+                    .then(() => {
+                        alert(msg);
+                    })
+                    .catch(() => {
+                        fallbackCopy(msg);
+                    });
+            } else {
+                fallbackCopy(msg);
             }
+            return text;
         }
 
-        // --- Screenshot: download high-res PNG of current matrix ---
-        function downloadPNG() {
-            const SCALE = 6;                   // overall image size (try 4–8)
-            const ledRatio = REAL_LED_MM / REAL_PITCH_MM;  // e.g. 3/5
+        function importFile(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                const text = String(reader.result || "");
+                output.value = text;
+                loadAnimationFromText(text, true);
+            };
+            reader.readAsText(file);
+        }
 
-            // Base pitch in pixels in the PNG
-            const PITCH = 50 * SCALE;          // arbitrary base, SCALE makes it big
-            const LED_SIZE = PITCH * ledRatio; // keeps same LED:pitch ratio as real panel
-            const GAP = PITCH - LED_SIZE;      // rest of pitch is the gap
-            const BORDER = PITCH;              // frame around the matrix
+        // --- Screenshot: download high-res PNG of current frame ---
+        function downloadPNG() {
+            const SCALE = 6;
+            const ledRatio = REAL_LED_MM / REAL_PITCH_MM;
+
+            const PITCH = 50 * SCALE;
+            const LED_SIZE = PITCH * ledRatio;
+            const GAP = PITCH - LED_SIZE;
+            const BORDER = PITCH;
             const RADIUS = LED_SIZE / 2;
 
             const canvas = document.createElement("canvas");
@@ -744,28 +999,23 @@
             canvas.height = BORDER * 2 + HEIGHT * pitchPx - GAP;
             const ctx = canvas.getContext("2d");
 
-            // Background
             ctx.fillStyle = "#000";
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // LED rendering loop
             for (let y = 0; y < HEIGHT; y++) {
                 for (let x = 0; x < WIDTH; x++) {
                     const idx = y * WIDTH + x;
-                    let hex = normalizeHex(pixels[idx].dataset.color || "#000000");
-
+                    const hex = normalizeHex(pixels[idx].dataset.color || "#000000");
                     const px = BORDER + x * pitchPx + LED_SIZE / 2;
                     const py = BORDER + y * pitchPx + LED_SIZE / 2;
 
-                    // Shadow / glow
                     if (hex !== "#000000") {
-                        ctx.shadowBlur = 0.3 * PITCH;    // glow proportional to pitch
+                        ctx.shadowBlur = 0.3 * PITCH;
                         ctx.shadowColor = hex;
                     } else {
                         ctx.shadowBlur = 0;
                     }
 
-                    // LED disk
                     ctx.beginPath();
                     ctx.arc(px, py, RADIUS, 0, Math.PI * 2);
                     ctx.fillStyle = hex !== "#000000" ? hex : "#111";
@@ -773,7 +1023,6 @@
                 }
             }
 
-            // Download file
             const link = document.createElement("a");
             link.href = canvas.toDataURL("image/png");
             link.download = "matrix_64x32_hd.png";
@@ -789,7 +1038,6 @@
             currentColor = normalizeHex(color);
             colorPicker.value = currentColor;
 
-            // Highlight swatches only if selected from a swatch
             swatches.forEach(s => s.classList.remove("active"));
             if (fromSwatch && swatchEl) {
                 swatchEl.classList.add("active");
@@ -812,12 +1060,11 @@
         });
 
         colorPicker.addEventListener("input", (e) => {
-            // When user picks a custom color, deselect all presets
             swatches.forEach(s => s.classList.remove("active"));
             currentColor = normalizeHex(e.target.value);
         });
 
-        // --- Eraser toggle (works great on mobile) ---
+        // --- Eraser toggle ---
         eraserToggleBtn.addEventListener("click", () => {
             eraseMode = !eraseMode;
             eraserToggleBtn.classList.toggle("active", eraseMode);
@@ -827,15 +1074,45 @@
         });
 
         // --- Event wiring ---
-        document.getElementById("clear").onclick = () => setAll(false);
-        document.getElementById("fill").onclick = () => setAll(true);
-        document.getElementById("invert").onclick = invertAll;
-        document.getElementById("export").onclick = exportC;
+        document.getElementById("clear").onclick = () => {
+            stopPlayback();
+            setAll(false);
+        };
+        document.getElementById("fill").onclick = () => {
+            stopPlayback();
+            setAll(true);
+        };
+        document.getElementById("invert").onclick = () => {
+            stopPlayback();
+            invertAll();
+        };
+        document.getElementById("export").onclick = () => exportC(true);
         document.getElementById("load").onclick = loadFromText;
         document.getElementById("picture").onclick = downloadPNG;
 
-        // Initial export (empty / black) + initial language
-        exportC();
+        document.getElementById("prevFrame").onclick = () => {
+            stopPlayback();
+            setCurrentFrame((currentFrameIndex - 1 + frames.length) % frames.length);
+        };
+        document.getElementById("nextFrame").onclick = () => {
+            stopPlayback();
+            setCurrentFrame((currentFrameIndex + 1) % frames.length);
+        };
+        document.getElementById("newFrame").onclick = () => addFrame(false);
+        document.getElementById("newFrameCopy").onclick = () => addFrame(true);
+        document.getElementById("deleteFrame").onclick = deleteCurrentFrame;
+        playAnimBtn.onclick = togglePlayback;
+
+        importFileBtn.onclick = () => importFileInput.click();
+        importFileInput.addEventListener("change", (e) => {
+            const file = e.target.files && e.target.files[0];
+            importFile(file);
+            importFileInput.value = "";
+        });
+
+        // Initial render + initial export text + initial language
+        renderCurrentFrame();
+        exportC(false);
         applyLanguage("en");
     </script>
 </body>
